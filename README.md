@@ -322,7 +322,7 @@ plain `pip install -r requirements.txt` never invokes a compiler. Total hosting 
 doubled `sih-main-main/sih-main-main/` folder.
 
 ```bash
-git clone https://github.com/Bhushan2318/sih-main.git
+git clone https://github.com/hrithik-roshan19/Sanket-X.git
 cd sih-main
 ```
 
