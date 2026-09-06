@@ -1,0 +1,18 @@
+# Live GRIB2 decoding — ONLY needed to pull fresh NOAA GEFS operational cycles
+# (POST /api/ingest/run-cycle) or to rebuild the sample data with
+# scripts/fetch_gefs_reforecast_sample.py.
+#
+# Install on top of the core set:  pip install -r requirements.txt -r requirements-live.txt
+#
+# Windows note: the `eccodes` wheel bundles its own libeccodes + definition files, but a
+# few releases shipped a broken definitions bundle on Windows ("Unable to find boot.def",
+# "flex scanner error"). `ecmwflibs` provides a known-good binary + definitions and wires
+# the paths automatically, so it is listed first. If `python -m eccodes selfcheck` still
+# fails, use conda-forge (`conda install -c conda-forge eccodes python-eccodes`) or WSL.
+
+ecmwflibs>=0.6
+eccodes>=2.38
+cfgrib>=0.9.10,<0.10
+xarray>=2024.1
+# NetCDF/IMD gridded rainfall ingestion
+netCDF4>=1.6,<2.0

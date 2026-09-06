@@ -1,0 +1,37 @@
+# Render blueprint. Import this repo at https://dashboard.render.com/blueprints and Render
+# reads this file - no console wiring to redo if the service is ever recreated.
+#
+# One free web service serves both the API and the dashboard from a single origin. Free
+# tier means 512 MB RAM, no websocket support, and a spin-down after 15 minutes of no
+# traffic (~30-50 s cold start). All three are handled rather than worked around:
+#   * 512 MB   - this box never trains; CI does. See .github/workflows/refresh-data.yml.
+#   * no ws    - the client falls back to 60 s polling and reports the socket as closed.
+#   * spin-down- point an external pinger (UptimeRobot, every 5 min) at /api/health.
+#                A browser tab will NOT do: polling pauses when the tab is backgrounded.
+
+services:
+  - type: web
+    name: sanket
+    runtime: docker
+    plan: free
+    # Closest free region to India; latency here is the demo's felt quality.
+    region: singapore
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    # Cheap, and true even before a model exists - it reports model_trained either way.
+    healthCheckPath: /api/health
+    envVars:
+      # The serving box must never reach out to NOAA or start a scheduler thread. Fresh
+      # cycles arrive baked into the image, pulled by CI.
+      - key: LIVE_INGEST_ENABLED
+        value: "false"
+      # The startup warm scores every historical cycle in a background thread. If a real
+      # request lands while it is still running, the box pays for two scoring passes at
+      # once - which is what kept OOM-killing this container. Cold caches only mean the
+      # first guided-replay call is slow.
+      - key: WARM_CACHES_ON_STARTUP
+        value: "false"
+      - key: UPLOAD_ENABLED
+        value: "false"
+      - key: RATE_LIMIT_ENABLED
+        value: "true"

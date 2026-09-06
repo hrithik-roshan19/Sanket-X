@@ -1,0 +1,36 @@
+# Core runtime. Everything here ships as a prebuilt wheel on Windows / macOS / Linux for
+# CPython 3.9 through 3.12 — a plain `pip install -r requirements.txt` never compiles.
+#
+# Python 3.11 or 3.12 is recommended. 3.9 still works. 3.13 is not supported yet: numpy
+# 1.26 has no 3.13 wheel and moving to numpy 2 needs a compatibility pass across xgboost
+# / shap first.
+#
+# GRIB2 decoding (eccodes / cfgrib / xarray) lives in requirements-live.txt — it is only
+# needed to pull *fresh* NOAA GEFS cycles. The app, the dashboard, scoring, guided
+# replay, CSV/parquet upload and the whole test suite run without it.
+
+fastapi>=0.110,<0.116
+uvicorn[standard]>=0.27,<0.31
+
+pandas>=2.0,<2.2
+numpy>=1.26,<2.0
+pyarrow>=14.0,<17.0
+
+xgboost>=2.0,<2.1
+scikit-learn>=1.3,<1.5
+shap>=0.44,<0.46
+
+sqlalchemy>=2.0,<2.1
+
+openpyxl>=3.1,<3.2
+shapely>=2.0,<2.1
+rapidfuzz>=3.6,<4.0
+
+python-multipart>=0.0.9,<0.1.0
+pydantic>=2.5,<2.9
+pydantic-settings>=2.1,<2.4
+
+websockets>=12.0,<13.0
+
+requests>=2.31,<3.0
+

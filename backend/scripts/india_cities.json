@@ -1,0 +1,254 @@
+[
+  {
+    "city": "Agartala",
+    "state": "Tripura",
+    "region": "North-East",
+    "lat": 23.8315,
+    "lon": 91.2868
+  },
+  {
+    "city": "Aizawl",
+    "state": "Mizoram",
+    "region": "North-East",
+    "lat": 23.7271,
+    "lon": 92.7176
+  },
+  {
+    "city": "Amaravati",
+    "state": "Andhra Pradesh",
+    "region": "South-East Coast",
+    "lat": 16.5149,
+    "lon": 80.5163
+  },
+  {
+    "city": "Bengaluru",
+    "state": "Karnataka",
+    "region": "South Deccan",
+    "lat": 12.9716,
+    "lon": 77.5946
+  },
+  {
+    "city": "Bhopal",
+    "state": "Madhya Pradesh",
+    "region": "Central India",
+    "lat": 23.2599,
+    "lon": 77.4126
+  },
+  {
+    "city": "Bhubaneswar",
+    "state": "Odisha",
+    "region": "East Coast",
+    "lat": 20.2961,
+    "lon": 85.8245
+  },
+  {
+    "city": "Chandigarh",
+    "state": "Chandigarh / Punjab / Haryana",
+    "region": "North India",
+    "lat": 30.7333,
+    "lon": 76.7794
+  },
+  {
+    "city": "Chennai",
+    "state": "Tamil Nadu",
+    "region": "South-East Coast",
+    "lat": 13.0827,
+    "lon": 80.2707
+  },
+  {
+    "city": "Daman",
+    "state": "Dadra and Nagar Haveli and Daman and Diu",
+    "region": "West Coast",
+    "lat": 20.3974,
+    "lon": 72.8328
+  },
+  {
+    "city": "Dehradun",
+    "state": "Uttarakhand",
+    "region": "North Himalayan",
+    "lat": 30.3165,
+    "lon": 78.0322
+  },
+  {
+    "city": "Dispur / Guwahati",
+    "state": "Assam",
+    "region": "North-East",
+    "lat": 26.1408,
+    "lon": 91.7898
+  },
+  {
+    "city": "Gandhinagar / Ahmedabad",
+    "state": "Gujarat",
+    "region": "West India",
+    "lat": 23.2156,
+    "lon": 72.6369
+  },
+  {
+    "city": "Gangtok",
+    "state": "Sikkim",
+    "region": "Eastern Himalayan",
+    "lat": 27.3314,
+    "lon": 88.6138
+  },
+  {
+    "city": "Hyderabad",
+    "state": "Telangana",
+    "region": "Central-South",
+    "lat": 17.385,
+    "lon": 78.4867
+  },
+  {
+    "city": "Imphal",
+    "state": "Manipur",
+    "region": "North-East",
+    "lat": 24.817,
+    "lon": 93.9368
+  },
+  {
+    "city": "Itanagar",
+    "state": "Arunachal Pradesh",
+    "region": "North-East",
+    "lat": 27.0844,
+    "lon": 93.6053
+  },
+  {
+    "city": "Jaipur",
+    "state": "Rajasthan",
+    "region": "North-West",
+    "lat": 26.9124,
+    "lon": 75.7873
+  },
+  {
+    "city": "Karnal",
+    "state": "Haryana",
+    "region": "North India",
+    "lat": 29.6857,
+    "lon": 76.9905
+  },
+  {
+    "city": "Kavaratti",
+    "state": "Lakshadweep",
+    "region": "Island / Arabian Sea",
+    "lat": 10.5593,
+    "lon": 72.6358
+  },
+  {
+    "city": "Kohima",
+    "state": "Nagaland",
+    "region": "North-East",
+    "lat": 25.6751,
+    "lon": 94.1086
+  },
+  {
+    "city": "Kolkata",
+    "state": "West Bengal",
+    "region": "East India",
+    "lat": 22.5726,
+    "lon": 88.3639
+  },
+  {
+    "city": "Leh",
+    "state": "Ladakh",
+    "region": "Trans-Himalayan",
+    "lat": 34.1526,
+    "lon": 77.577
+  },
+  {
+    "city": "Lucknow",
+    "state": "Uttar Pradesh",
+    "region": "North India",
+    "lat": 26.8467,
+    "lon": 80.9462
+  },
+  {
+    "city": "Ludhiana",
+    "state": "Punjab",
+    "region": "North India",
+    "lat": 30.901,
+    "lon": 75.8573
+  },
+  {
+    "city": "Mumbai",
+    "state": "Maharashtra",
+    "region": "West Coast",
+    "lat": 19.076,
+    "lon": 72.8777
+  },
+  {
+    "city": "New Delhi",
+    "state": "Delhi (NCT)",
+    "region": "North India",
+    "lat": 28.6139,
+    "lon": 77.209
+  },
+  {
+    "city": "Panaji",
+    "state": "Goa",
+    "region": "West Coast",
+    "lat": 15.4909,
+    "lon": 73.8278
+  },
+  {
+    "city": "Patna",
+    "state": "Bihar",
+    "region": "East India",
+    "lat": 25.5941,
+    "lon": 85.1376
+  },
+  {
+    "city": "Port Blair",
+    "state": "Andaman and Nicobar Islands",
+    "region": "Island / Bay of Bengal",
+    "lat": 11.6234,
+    "lon": 92.7265
+  },
+  {
+    "city": "Puducherry",
+    "state": "Puducherry",
+    "region": "South-East Coast",
+    "lat": 11.9416,
+    "lon": 79.8083
+  },
+  {
+    "city": "Raipur",
+    "state": "Chhattisgarh",
+    "region": "Central India",
+    "lat": 21.2514,
+    "lon": 81.6296
+  },
+  {
+    "city": "Ranchi",
+    "state": "Jharkhand",
+    "region": "East India",
+    "lat": 23.3441,
+    "lon": 85.3096
+  },
+  {
+    "city": "Shillong",
+    "state": "Meghalaya",
+    "region": "North-East",
+    "lat": 25.5788,
+    "lon": 91.8933
+  },
+  {
+    "city": "Shimla",
+    "state": "Himachal Pradesh",
+    "region": "North Himalayan",
+    "lat": 31.1048,
+    "lon": 77.1734
+  },
+  {
+    "city": "Srinagar",
+    "state": "Jammu and Kashmir",
+    "region": "North Himalayan",
+    "lat": 34.0837,
+    "lon": 74.7973
+  },
+  {
+    "city": "Thiruvananthapuram",
+    "state": "Kerala",
+    "region": "South-West Coast",
+    "lat": 8.5241,
+    "lon": 76.9366
+  }
+]

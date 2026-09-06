@@ -1,0 +1,292 @@
+name: Refresh model and data
+
+# Keeps the deployed site current without paying for a box that can train.
+#
+# A full retrain peaks around 2 GB; Render's free tier gives 512 MB. GitHub Actions gives
+# a 16 GB runner and unlimited minutes on a public repo, so the work happens here and only
+# the result - model + canonical store + metadata db, ~24 MB - is published as a release
+# asset for the image build to pull.
+#
+# The store is CUMULATIVE. Each run restores the previous asset before ingesting, so the
+# canonical parquet grows cycle by cycle instead of every run training on one day of data.
+#
+# A RED RUN IS NOT NECESSARILY A BROKEN PIPELINE. refresh_for_deploy exits 2 when NOAA
+# served a cycle too incomplete to publish - a deliberate refusal, so the site keeps the
+# last cycle that was actually complete rather than one whose rainfall is understated.
+# Check the log for "REJECTED"; the next scheduled run re-attempts the same cycle.
+
+on:
+  schedule:
+    # GEFS publishes roughly 5.5 h after its init hour, so each run picks up the cycle
+    # before it: 06:23 UTC gets 00Z, 12:23 gets 06Z, and so on.
+    #
+    # :23 rather than :00 on purpose. GitHub's scheduler is best-effort and queues hardest
+    # at the top of the hour, which is where every naively-written cron lands; this
+    # workflow has already fired 3 h 25 m late once and missed a slot entirely. The offset
+    # only reduces the odds - a missed slot is made harmless by the catch-up in
+    # refresh_for_deploy, which ingests any of the last 4 cycles the store is missing.
+    - cron: "23 0,6,12,18 * * *"
+  workflow_dispatch:
+    inputs:
+      force_train:
+        description: "Retrain even if no newly-verified observations landed"
+        type: boolean
+        default: false
+      skip_forecast:
+        description: "Skip the GEFS pull (retrain on what is already stored)"
+        type: boolean
+        default: false
+      cycle:
+        description: "Pull exactly this cycle instead of catching up, e.g. 2026-08-31T00"
+        type: string
+        default: ""
+      force_cycle:
+        description: "Re-pull the cycle even if it is already ingested (replaces its rows)"
+        type: boolean
+        default: false
+      backfill_years:
+        description: "Reforecast years to train on, added to a throwaway copy of the store"
+        type: string
+        default: "2000-2019"
+
+# Writing the release asset is the only write this needs.
+permissions:
+  contents: write
+
+concurrency:
+  # Never let two runs fight over the same release asset or the same store.
+  group: refresh-data
+  cancel-in-progress: false
+
+env:
+  ASSET: sanket-data.tar.gz
+  TAG: data-latest
+  # Overridable via a repo variable so a fork or a moved service does not need a code edit.
+  SITE: ${{ vars.SITE_URL || 'https://sanket-a0dd.onrender.com' }}
+  # Every run trains on the archive, scheduled runs included. This is not optional: the
+  # published artifact carries only the serving store, so a run that trained on whatever
+  # it restored would quietly replace a model built from 170 cycles with one built from
+  # 72, publish it, and look entirely healthy doing so.
+  BACKFILL_YEARS: ${{ inputs.backfill_years || '2000-2019' }}
+  # This job is the one that legitimately trains: 16 GB runner, no requests to serve.
+  # full_retrain refuses without it, so the 512 MB serving box cannot be made to train.
+  ALLOW_LOCAL_RETRAIN: "true"
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            backend/requirements.txt
+            backend/requirements-live.txt
+
+      - name: Install dependencies
+        working-directory: backend
+        # requirements-live brings eccodes/cfgrib/xarray - needed here (and only here) to
+        # decode the GRIB2 the NOAA cycle ships as.
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-live.txt
+          python -m eccodes selfcheck
+
+      - name: Restore the previous store
+        working-directory: backend
+        env:
+          GH_TOKEN: ${{ github.token }}
+        # Missing on the very first run, which is fine: the script then builds a store from
+        # this cycle alone. It must not be fatal, or the pipeline could never bootstrap.
+        run: |
+          if gh release download "$TAG" --pattern "$ASSET" --output /tmp/prev.tar.gz --clobber 2>/dev/null; then
+            tar -xzf /tmp/prev.tar.gz -C .
+            echo "restored previous store:"
+            du -sh data/canonical data/models 2>/dev/null || true
+          else
+            echo "no previous asset (first run) - starting from an empty store"
+          fi
+
+      - name: Pull the cycle, verify, retrain
+        working-directory: backend
+        # Exit 2 means the cycle was refused as too incomplete to publish; the failure is
+        # the point, and every step after this is skipped so nothing stale is shipped.
+        run: |
+          python -m scripts.refresh_for_deploy \
+            --skip-train \
+            ${{ inputs.force_train && '--force-train' || '' }} \
+            ${{ inputs.skip_forecast && '--skip-forecast' || '' }} \
+            ${{ inputs.force_cycle && '--force-cycle' || '' }} \
+            ${{ inputs.cycle && format('--cycle {0}', inputs.cycle) || '' }}
+
+      - name: Train on the full archive, in a throwaway copy of the store
+        # One-off, skipped entirely unless `backfill_years` is set, so every scheduled
+        # run is byte-for-byte the workflow it was before this existed.
+        #
+        # The serving store is NEVER modified. The backfill is ingested into a copy and
+        # the model is trained against that; packaging below then ships the original
+        # store with the new model. This matters because the box has 512 MB and dies
+        # rather than degrades: measured, ten years of archive costs +70 MB at serve
+        # time, against 76 MB of headroom. Training does not need to happen where
+        # serving happens - the runner has 16 GB and never answers a request.
+        #
+        # Replay only ever offers the 10 newest cycles (replay_service._MAX_CYCLES), and
+        # scoring reads one cycle at a time, so the older archive is of no use on the box
+        # even before the memory cost is counted.
+        #
+        # A temp DB as well as a temp store: ingest writes batch rows, and the packaged
+        # metadata.db should describe what actually ships, not the training copy.
+        working-directory: backend
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANONICAL_DIR: /tmp/train_store
+          DB_PATH: /tmp/train.db
+        run: |
+          find data/canonical -name '*.parquet' | sort | xargs shasum -a 256 \
+            | shasum -a 256 > /tmp/store_before_archive
+          cp -r data/canonical /tmp/train_store
+          BEFORE=$(du -sh data/canonical | cut -f1)
+          gh release download backfill-data -p "backfill-2000-2019.tar.gz" -D /tmp --clobber
+          tar xzf /tmp/backfill-2000-2019.tar.gz -C data/samples
+          python -m scripts.ingest_backfill --years "$BACKFILL_YEARS"
+          python -c "
+          import pyarrow.dataset as ds, pandas as pd
+          d = ds.dataset('/tmp/train_store', format='parquet', partitioning='hive').to_table(columns=['value_type','init_date']).to_pandas()
+          f = d[d.value_type=='forecast'].dropna(subset=['init_date'])
+          i = pd.to_datetime(f.init_date)
+          print(f'TRAINING store: {len(d):,} rows, {i.nunique()} cycles')
+          print(i.dt.year.value_counts().sort_index().to_string())"
+          python -m app.ml.train_pipeline --emit-eval
+          echo "serving store before=$BEFORE after=$(du -sh data/canonical | cut -f1)"
+
+      - name: Prove the archive training did not touch the serving store
+        # The safety argument is that the box receives the store it already runs, plus
+        # whatever this run's own cycle pull legitimately added - and nothing from the
+        # archive. So the checksum brackets the archive step specifically: taken just
+        # before the copy, compared just after training. Comparing against the published
+        # artifact instead would fail for a good reason (the cycle pull above) and teach
+        # everyone to ignore it.
+        working-directory: backend
+        run: |
+          AFTER=$(find data/canonical -name '*.parquet' | sort | xargs shasum -a 256 | shasum -a 256)
+          BEFORE=$(cat /tmp/store_before_archive)
+          echo "before archive: $BEFORE"
+          echo "after  archive: $AFTER"
+          if [ "$BEFORE" != "$AFTER" ]; then
+            echo "::error::archive training modified the serving store; refusing to publish"
+            exit 1
+          fi
+          python -c "
+          import pyarrow.dataset as ds, pandas as pd
+          d = ds.dataset('data/canonical', format='parquet', partitioning='hive').to_table(columns=['value_type','init_date']).to_pandas()
+          f = d[d.value_type=='forecast'].dropna(subset=['init_date'])
+          print(f'SHIPPING store: {len(d):,} rows, {pd.to_datetime(f.init_date).nunique()} cycles')"
+
+      - name: Score the baseline ladder for this run
+        # "ROC-AUC 0.84" claims nothing without "against what?". This scores climatology,
+        # lead-day and ensemble-spread baselines on the EXACT rows the classifier was
+        # scored on - the event frames the training step above just published - and writes
+        # the comparison into the run directory, so it ships with the model and is served
+        # beside its metrics.
+        #
+        # Never fatal: a run whose split is too small to fit baselines should still
+        # publish its model. The API reports no table rather than a stale one.
+        continue-on-error: true
+        working-directory: backend
+        run: python -m scripts.run_baselines --no-write --write-run-artifact
+
+      - name: Package
+        id: pack
+        working-directory: backend
+        # Packs ONLY the current model run. Naively taring data/models would compound: this
+        # job restores the previous asset, trains a new run beside the old ones, and
+        # repacks - so the artifact would grow ~8 MB every six hours and never shrink.
+        run: |
+          python -m scripts.package_for_deploy "/tmp/$ASSET"
+          echo "size=$(du -h "/tmp/$ASSET" | cut -f1)" >> "$GITHUB_OUTPUT"
+          echo "run_id=$(python -c 'from app.ml import registry; print(registry.current_run_id())')" >> "$GITHUB_OUTPUT"
+
+      - name: Publish the asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        # A fixed tag rather than a new release per run: the Dockerfile can then hard-code
+        # one permanent URL, and we do not accumulate a release for every six hours.
+        run: |
+          gh release view "$TAG" >/dev/null 2>&1 || \
+            gh release create "$TAG" \
+              --title "Latest model and data" \
+              --notes "Rolling artifact published by the refresh workflow. Replaced on every run; not a source release."
+          gh release upload "$TAG" "/tmp/$ASSET" --clobber
+          gh release edit "$TAG" \
+            --notes "Rolling artifact published by the refresh workflow.
+          Model run: \`${{ steps.pack.outputs.run_id }}\`
+          Size: ${{ steps.pack.outputs.size }}
+          Built: $(date -u '+%Y-%m-%d %H:%M UTC') from ${{ github.sha }}"
+
+      - name: Trigger the Render deploy
+        id: deploy
+        # Set RENDER_DEPLOY_HOOK in repo Settings > Secrets > Actions. Without it the asset
+        # is still published and the next deploy picks it up; only the auto-refresh stops.
+        # The secret is read through env rather than a step `if:` so an unset secret is a
+        # skipped curl, not a workflow that fails to parse.
+        env:
+          HOOK: ${{ secrets.RENDER_DEPLOY_HOOK }}
+        run: |
+          if [ -n "$HOOK" ]; then
+            curl -fsS -X POST "$HOOK" && echo "deploy triggered"
+            echo "state=triggered" >> "$GITHUB_OUTPUT"
+          else
+            echo "RENDER_DEPLOY_HOOK not set - asset published, deploy not triggered"
+            echo "state=not configured" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Warm the box
+        if: steps.deploy.outputs.state == 'triggered'
+        # Best-effort, never fails the run: the data is published and correct either way,
+        # and a red run is reserved for a cycle that was refused (see the header).
+        continue-on-error: true
+        # The link is sent to judges who open it unattended, so the first *human* request
+        # must not be the one that pays for a cold cache. Caches are per-process and the
+        # deploy above just emptied them; /api/replay/cycles measured 57.7 s cold against
+        # ~1 s warm, and it is one of the four tabs.
+        #
+        # Sequential on purpose. In-process warming (WARM_CACHES_ON_STARTUP) is off because
+        # it OOM-killed the 512 MB box - it scored in a background thread while a real
+        # request scored in the foreground, two passes at once. Pulling one endpoint at a
+        # time from here is exactly one pass at a time, which the box can afford.
+        run: |
+          want='${{ steps.pack.outputs.run_id }}'
+          echo "waiting for $want to go live at $SITE"
+          live=""
+          for i in $(seq 1 60); do
+            live=$(curl -fsS --max-time 30 "$SITE/api/model/status" 2>/dev/null \
+                   | python3 -c 'import json,sys; print(json.load(sys.stdin).get("current_run_id",""))' \
+                   2>/dev/null || true)
+            if [ "$live" = "$want" ]; then echo "live after ~$((i * 10))s"; break; fi
+            sleep 10
+          done
+          if [ "$live" != "$want" ]; then
+            echo "::warning::$SITE still reports '$live' after 10 min, not '$want'; warming it anyway"
+          fi
+          for ep in /api/regions/all /api/ensemble /api/replay/cycles; do
+            printf '  %-20s ' "$ep"
+            curl -fsS --max-time 300 -o /dev/null -w '%{http_code}  %{time_total}s\n' \
+              "$SITE$ep" || echo "failed (left cold)"
+          done
+
+      - name: Summary
+        run: |
+          {
+            echo "### Refresh complete"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Model run | \`${{ steps.pack.outputs.run_id }}\` |"
+            echo "| Asset size | ${{ steps.pack.outputs.size }} |"
+            echo "| Deploy hook | ${{ steps.deploy.outputs.state }} |"
+          } >> "$GITHUB_STEP_SUMMARY"

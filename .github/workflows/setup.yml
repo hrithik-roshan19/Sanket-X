@@ -1,0 +1,113 @@
+name: setup
+
+# Runs the README setup end to end on clean Windows and Linux runners, so "works on my
+# machine" is verified, not hoped for. If this is green, a fresh clone + the README steps
+# produce a working dashboard.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  # These jobs train; full_retrain refuses unless a process opts in.
+  ALLOW_LOCAL_RETRAIN: "true"
+
+jobs:
+  backend:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+        python: ["3.11", "3.12"]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      # The whole point: this must install from prebuilt wheels only, no compiler.
+      - name: install core dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install --only-binary=:all: -r requirements.txt -r requirements-dev.txt
+
+      - name: create .env
+        run: cp .env.example .env
+
+      - name: ingest the sample data (README step)
+        run: |
+          python -m app.ingestion.pipeline --file data/samples/gefs_reforecast_india_2019.parquet --confirm-all
+          python -m app.ingestion.pipeline --file data/samples/era5_observations_india_2019.parquet --confirm-all
+
+      - name: train (README step)
+        run: python -m app.ml.train_pipeline
+
+      - name: test suite
+        run: python -m pytest -q
+
+      - name: boot uvicorn and health-check /api/model/status
+        run: |
+          python -m uvicorn app.main:app --port 8000 &
+          SERVER_PID=$!
+          ok=""
+          for i in $(seq 1 40); do
+            sleep 2
+            if curl -sf http://localhost:8000/api/model/status | grep -q '"model_trained": *true'; then
+              ok=1; echo "backend healthy after $((i*2))s"; break
+            fi
+          done
+          kill $SERVER_PID 2>/dev/null || true
+          test -n "$ok" || { echo "::error::backend never reported model_trained=true"; exit 1; }
+
+  frontend:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    defaults:
+      run:
+        shell: bash
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: npm ci
+      - run: cp .env.example .env
+      - run: npm run build
+
+  # eccodes on Windows is historically fragile. This job proves requirements-live.txt +
+  # ecmwflibs make GRIB decoding work; it is allowed to fail without blocking the rest
+  # while that is stabilised.
+  live-grib:
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: install core + live dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-live.txt
+      - name: eccodes selfcheck
+        run: python -m eccodes selfcheck

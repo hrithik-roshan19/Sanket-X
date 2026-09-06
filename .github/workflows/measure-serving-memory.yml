@@ -1,0 +1,159 @@
+name: Measure serving memory
+
+# Does the backfilled store still fit the 512 MB serving box?
+#
+# The laptop says the store costs +112 MB at serve time (459 -> 571 MB peak), but that is
+# macOS RSS and Render runs a Linux container, so the absolute number does not transfer.
+# This runs the same experiment on Linux, on the same runner image the rest of the
+# pipeline uses, and attributes the peak to a specific endpoint instead of reporting one
+# number for the whole session.
+#
+# Publishes NOTHING. It restores the released artifact, measures, ingests the backfill,
+# measures again, and prints a table. Nothing here can change what the site serves.
+
+on:
+  workflow_dispatch:
+    inputs:
+      backfill_years:
+        description: "Reforecast years to add before the second measurement"
+        type: string
+        default: "2010-2015"
+
+concurrency:
+  group: measure-serving-memory
+  cancel-in-progress: true
+
+jobs:
+  measure:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        working-directory: backend
+        run: pip install -r requirements.txt
+
+      - name: Restore the published store
+        working-directory: backend
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download data-latest -p "sanket-data.tar.gz" -D /tmp --clobber
+          tar xzf /tmp/sanket-data.tar.gz -C .
+          ls -l /tmp/sanket-data.tar.gz
+
+      - name: Write the measurement harness
+        run: |
+          cat > /tmp/measure.sh <<'SH'
+          #!/bin/bash
+          # Boot the API exactly as Render does, walk the endpoints one at a time, and
+          # record peak RSS after each. Sequential on purpose: concurrent scoring is what
+          # OOM-killed this box before, so the number we want is the cost of one pass.
+          set -uo pipefail
+          LABEL="$1"; PORT=8931
+          cd "$GITHUB_WORKSPACE/backend"
+          WARM_CACHES_ON_STARTUP=false LIVE_INGEST_ENABLED=false \
+            python -m uvicorn app.main:app --port $PORT --log-level warning \
+            > "/tmp/serve_$LABEL.log" 2>&1 &
+          PID=$!
+          for _ in $(seq 1 90); do
+            curl -fsS --max-time 5 "http://127.0.0.1:$PORT/api/health" >/dev/null 2>&1 && break
+            sleep 1
+          done
+          peak () { ps -o rss= -p $PID 2>/dev/null | tr -d ' '; }
+          BASE=$(peak)
+          echo "| endpoint | http | seconds | RSS after (MB) |"
+          echo "|---|---|---|---|"
+          echo "| (idle after boot) | - | - | $((BASE / 1024)) |"
+          MAX=$BASE
+          for ep in /api/model/status /api/regions/all /api/ensemble /api/replay/cycles; do
+            OUT=$(curl -fsS --max-time 900 -o /dev/null -w '%{http_code} %{time_total}' \
+                  "http://127.0.0.1:$PORT$ep" 2>/dev/null || echo "ERR -")
+            R=$(peak); [ -n "$R" ] && [ "$R" -gt "$MAX" ] && MAX=$R
+            echo "| \`$ep\` | ${OUT% *} | ${OUT#* }s | $((R / 1024)) |"
+            # An endpoint that errors returns in milliseconds and costs no memory, which
+            # is indistinguishable from a cheap endpoint in the peak alone. Record it so
+            # the verdict cannot be read off a run where nothing was actually scored.
+            case "$OUT" in 200\ *) ;; *) echo "FAILED $ep -> $OUT" >> /tmp/failures ;; esac
+          done
+          echo ""
+          echo "**$LABEL peak RSS: $((MAX / 1024)) MB**"
+          echo "$((MAX / 1024))" > "/tmp/peak_$LABEL"
+          kill $PID 2>/dev/null; wait $PID 2>/dev/null || true
+          SH
+          chmod +x /tmp/measure.sh
+
+      - name: Measure the published store
+        working-directory: backend
+        run: |
+          python -c "
+          import pyarrow.dataset as ds, pandas as pd
+          d = ds.dataset('data/canonical', format='parquet', partitioning='hive').to_table(columns=['value_type','init_date']).to_pandas()
+          f = d[d.value_type=='forecast'].dropna(subset=['init_date'])
+          print(f'published store: {len(d):,} rows on disk, {pd.to_datetime(f.init_date).nunique()} cycles')"
+          { echo "### Published store"; echo ""; /tmp/measure.sh published; echo ""; } \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Ingest the backfill
+        working-directory: backend
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download backfill-data -p "backfill-2010-2019.tar.gz" -D /tmp --clobber
+          tar xzf /tmp/backfill-2010-2019.tar.gz -C data/samples
+          python -m scripts.ingest_backfill --years '${{ inputs.backfill_years }}'
+          # Regenerate the summary sidecar, exactly as package_for_deploy does on every
+          # publish. Without this the store signature no longer matches the shipped
+          # cache, /api/model/status falls back to deduplicating the whole store on the
+          # serving box, and the measurement reports ~500 MB that no deployed
+          # configuration would ever pay. Measured before this line existed: model/status
+          # went 0.28 s / 398 MB -> 9.72 s / 918 MB, and every later reading inherited it
+          # because RSS is a high-water mark.
+          python -c "
+          from app.storage import parquet_store
+          s = parquet_store.write_summary_cache()
+          print(f'summary cached: {s[\"total_rows\"]:,} rows, {s[\"forecast_cycles\"]} cycles')" 
+          python -c "
+          import pyarrow.dataset as ds, pandas as pd
+          d = ds.dataset('data/canonical', format='parquet', partitioning='hive').to_table(columns=['value_type','init_date']).to_pandas()
+          f = d[d.value_type=='forecast'].dropna(subset=['init_date'])
+          i = pd.to_datetime(f.init_date)
+          print(f'backfilled store: {len(d):,} rows on disk, {i.nunique()} cycles')
+          print(i.dt.year.value_counts().sort_index().to_string())"
+
+      - name: Measure the backfilled store
+        # Serves the SAME model against the bigger store. The question is what the store
+        # costs to scan and score, and retraining first would change two things at once.
+        working-directory: backend
+        run: |
+          { echo "### Backfilled store (\`${{ inputs.backfill_years }}\` added)"; echo ""
+            /tmp/measure.sh backfilled; echo ""; } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Verdict
+        run: |
+          A=$(cat /tmp/peak_published); B=$(cat /tmp/peak_backfilled)
+          if [ -s /tmp/failures ]; then
+            echo "::error::endpoints failed; the peaks below measured nothing useful"
+            cat /tmp/failures
+            cat /tmp/failures >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          {
+            echo "### Verdict"
+            echo ""
+            echo "| | peak RSS |"
+            echo "|---|---|"
+            echo "| published store | ${A} MB |"
+            echo "| backfilled store | ${B} MB |"
+            echo "| delta | $((B - A)) MB |"
+            echo "| Render limit | 512 MB |"
+            echo "| headroom if shipped | $((512 - B)) MB |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "published=${A}MB backfilled=${B}MB delta=$((B - A))MB headroom=$((512 - B))MB"

@@ -1,0 +1,92 @@
+name: Warm the box after a push deploy
+
+# Render auto-deploys on every push to main through its own git integration, which never
+# touches the refresh workflow - so the warm step that runs there does not cover pushes.
+# Caches are per-process and a deploy starts them empty; /api/replay/cycles was measured
+# at 54 s cold against ~0.2 s warm, and it is one of the four tabs. The judges are sent a
+# link rather than shown a demo, so the first *human* request must not be the cold one.
+#
+# This workflow never fails. Nothing downstream depends on it, the data is already live
+# and correct, and a failed warm costs the next visitor some latency and nothing else.
+
+on:
+  push:
+    branches: [main]
+    # Only what actually rebuilds the image. A docs-only push deploys nothing.
+    paths:
+      - "backend/**"
+      - "frontend/**"
+      - "Dockerfile"
+      - "docker-entrypoint.sh"
+
+concurrency:
+  # A newer push supersedes: warming a build that is already being replaced is wasted.
+  group: warm-on-push
+  cancel-in-progress: true
+
+env:
+  SITE: ${{ vars.SITE_URL || 'https://sanket-a0dd.onrender.com' }}
+
+jobs:
+  warm:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Wait for the new build, then warm it
+        run: |
+          set -u
+          want='${{ github.sha }}'
+
+          get_commit() {
+            curl -fsS --max-time 30 "$SITE/api/health" 2>/dev/null \
+              | python3 -c 'import json,sys; print(json.load(sys.stdin).get("commit",""))' 2>/dev/null || true
+          }
+          get_asset() {
+            curl -fsS --max-time 30 "$SITE/" 2>/dev/null \
+              | grep -o 'assets/index-[A-Za-z0-9_-]*\.css' | head -1 || true
+          }
+
+          base_asset=$(get_asset)
+          echo "waiting for $want at $SITE (asset before deploy: ${base_asset:-none})"
+
+          # 1. The precise signal: the box reports the commit it was built from.
+          # 2. If that is empty the env var is not set, so fall back to the served asset
+          #    hash changing - exact for a frontend push, silent for a backend-only one.
+          live=""; ready=""
+          for i in $(seq 1 60); do
+            live=$(get_commit)
+            if [ -n "$live" ] && [ "$live" = "$want" ]; then ready="commit"; break; fi
+            if [ -z "$live" ]; then
+              now=$(get_asset)
+              if [ -n "$base_asset" ] && [ -n "$now" ] && [ "$now" != "$base_asset" ]; then
+                ready="asset"; break
+              fi
+            fi
+            sleep 15
+          done
+
+          case "$ready" in
+            commit) echo "new build confirmed by commit after ~$((i * 15))s" ;;
+            asset)  echo "::notice::/api/health reports no commit; confirmed by asset hash change instead" ;;
+            *)      echo "::warning::could not confirm the new build within 15 min; warming whatever is serving" ;;
+          esac
+
+          # 3. Warm, then check it actually landed. A call that takes a while IS the warm;
+          #    if the process was swapped underneath us the next pass pays it again. Stop
+          #    as soon as a pass comes back fast, which is the state we actually want.
+          # NOTE: GitHub runs this under `bash -e`, so `cmd && assignment` would abort the
+          # step whenever cmd is false. Every conditional here is an explicit if/fi.
+          for attempt in 1 2 3; do
+            slow=0
+            for ep in /api/regions/all /api/ensemble /api/replay/cycles; do
+              t=$(curl -fsS --max-time 300 -o /dev/null -w '%{time_total}' "$SITE$ep" 2>/dev/null || echo 999)
+              printf '  attempt %s  %-20s %ss\n' "$attempt" "$ep" "$t"
+              if awk -v t="$t" 'BEGIN{ exit !(t > 5) }'; then slow=1; fi
+            done
+            if [ "$slow" -eq 0 ]; then
+              echo "warm after $attempt pass(es)"
+              break
+            fi
+            if [ "$attempt" -lt 3 ]; then sleep 30; fi
+          done
+          exit 0

@@ -1,0 +1,18 @@
+{
+  "bust_threshold": {
+    "t": 3.0
+  },
+  "p90_error": {
+    "t": 5.0
+  },
+  "risk_band_cuts": {
+    "medium": 0.2611578223583267,
+    "high": 0.4109636406773754
+  },
+  "threshold_percentile": 90.0,
+  "risk_cut_quantiles": [
+    0.5,
+    0.8
+  ],
+  "notes": []
+}

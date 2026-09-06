@@ -1,0 +1,135 @@
+name: Test training on the backfilled years
+
+# Answers one question: does training on the 2010-2019 backfill fit in CI?
+#
+# It would not fit on the development laptop - SIGKILL 137 at 9,004 MB - but that is not
+# evidence about CI. The laptop's kill threshold FELL run to run as scratch stores and
+# other processes accumulated (4 years survived at 9,794 MB; 6 years died at 9,537; 10
+# years died at 9,004), so it was tracking machine pressure rather than a real ceiling.
+# A GitHub runner is 16 GB with almost nothing else resident.
+#
+# This is also the environment that actually decides what can ship: every refresh run
+# retrains on whatever store is published, here. So its peak RSS is the number that
+# matters, not the laptop's.
+#
+# Trains with --dry-run and promotes nothing. The only output is measurements.
+
+on:
+  workflow_dispatch:
+    inputs:
+      years:
+        description: "Backfill years to ingest before training"
+        type: string
+        default: "2010-2018"
+
+concurrency:
+  group: test-backfill-train
+  cancel-in-progress: true
+
+env:
+  # These jobs train; full_retrain refuses unless a process opts in.
+  ALLOW_LOCAL_RETRAIN: "true"
+
+jobs:
+  train:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        working-directory: backend
+        # No requirements-live: nothing here decodes GRIB. The backfill ships as parquet.
+        run: pip install -r requirements.txt
+
+      - name: Report the runner's memory
+        run: |
+          echo "--- /proc/meminfo ---"; head -3 /proc/meminfo
+          echo "--- free -m ---"; free -m || true
+          nproc | xargs echo "cpus:"
+          echo "--- disk ---"; df -h / | tail -1
+
+      - name: Restore the production store
+        working-directory: backend
+        env:
+          GH_TOKEN: ${{ github.token }}
+        # Same base the live model trains from, so the comparison is like for like.
+        run: |
+          gh release download data-latest -p "sanket-data.tar.gz" -D /tmp --clobber
+          tar xzf /tmp/sanket-data.tar.gz -C .
+          python -c "
+          import pyarrow.dataset as ds
+          d = ds.dataset('data/canonical', format='parquet', partitioning='hive').to_table().to_pandas()
+          f = d[d.value_type=='forecast']
+          print(f'base store: {len(d):,} rows, {f.init_date.nunique()} init dates')"
+
+      - name: Fetch the backfilled years
+        working-directory: backend
+        env:
+          GH_TOKEN: ${{ github.token }}
+        # Parquet, not CSV: identical content and ~18x smaller (1.6 MB vs 29.2 MB a year).
+        run: |
+          gh release download backfill-data -p "backfill-2010-2019.tar.gz" -D /tmp --clobber
+          tar xzf /tmp/backfill-2010-2019.tar.gz -C data/samples
+          ls data/samples/*_201*.parquet | wc -l | xargs echo "backfill files:"
+
+      - name: Ingest
+        working-directory: backend
+        run: python -m scripts.ingest_backfill --years '${{ inputs.years || '2010-2018' }}'
+
+      - name: Train, sampling memory to a file
+        working-directory: backend
+        # `ps -C python3` matched nothing: the job launches `python -m ...`, so the process
+        # comm is `python` and the run reported a peak of 36 MB while really using ~2.3 GB.
+        # Match any comm starting with `python` instead, and keep MemAvailable as the
+        # cross-check - it is the figure that does not depend on getting a name right.
+        #
+        # continue-on-error, and the sampler writes to a FILE: the previous attempt was
+        # SIGTERMed (143) mid-training and took the reporting block with it, so the run
+        # produced no peak figure at all. A kill is the answer we came for, so it must
+        # survive being killed.
+        continue-on-error: true
+        run: |
+          ( while true; do
+              echo "$(date +%s) $(awk '/MemAvailable/{print $2}' /proc/meminfo) $(ps -eo rss=,comm= 2>/dev/null | awk '$2 ~ /^python/ {print $1}' | sort -rn | head -1)" >> mem.log
+              sleep 2
+            done ) &
+          SAMPLER=$!
+          set +e
+          python -m app.ml.train_pipeline --dry-run > train.log 2>&1
+          echo "$?" > train.rc
+          set -e
+          kill $SAMPLER 2>/dev/null || true
+
+      - name: Report what happened
+        working-directory: backend
+        if: always()
+        run: |
+          RC=$(cat train.rc 2>/dev/null || echo "killed-before-writing-rc")
+          PEAK_KB=$(awk '{if ($3+0 > m) m=$3+0} END{print m+0}' mem.log 2>/dev/null || echo 0)
+          MIN_AVAIL_KB=$(awk 'NR==1{m=$2} {if ($2+0 < m) m=$2+0} END{print m+0}' mem.log 2>/dev/null || echo 0)
+          {
+            echo "### Training on the backfilled years"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| years ingested | \`${{ inputs.years || '2010-2018' }}\` |"
+            echo "| train exit code | \`$RC\` |"
+            echo "| peak python RSS | **$((PEAK_KB / 1024)) MB** |"
+            echo "| lowest MemAvailable | **$((MIN_AVAIL_KB / 1024)) MB** |"
+            echo "| samples taken | $(wc -l < mem.log 2>/dev/null || echo 0) |"
+            echo ""
+            if [ "$RC" = "0" ]; then
+              echo '```'; grep -E "cycles |canonical rows|^  (train|val|test) " train.log; echo '```'
+            else
+              echo "Training did not complete. Last lines of its output:"
+              echo '```'; tail -12 train.log 2>/dev/null; echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "exit=$RC  peak=$((PEAK_KB / 1024))MB  min_available=$((MIN_AVAIL_KB / 1024))MB"
+          grep -E "cycles |canonical rows|^  (train|val|test) " train.log 2>/dev/null || tail -12 train.log 2>/dev/null

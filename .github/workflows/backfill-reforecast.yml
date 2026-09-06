@@ -1,0 +1,149 @@
+name: Backfill reforecast years
+
+# Expands the historical training base. The model was trained on 17 initialisation dates
+# from 2019 - a full seasonal spread, but 17 weather events, which leaves the held-out test
+# split at 3 cycles. This fetches the same seasonal pattern for earlier years so the split
+# becomes ~26 held-out initialisations across ten monsoons.
+#
+# GEFSv12 reforecast, 2000-2019, one 00 UTC cycle per date, 5 members, 0.25 deg - the same
+# product and script the 2019 sample came from, so extending carries no consistency risk.
+#
+# Fetching is entirely network-bound (~8 min per init date per member on a home connection),
+# so it is sharded across parallel jobs rather than run end to end. Nothing here touches the
+# live site: the result is an artifact to download, ingest and retrain from deliberately.
+
+# No inputs on purpose. The years live in the matrix below and the shard count has to
+# agree with it, so exposing either as a dispatch input would let them disagree silently.
+# To fetch different years (the archive runs 2000-2019), edit `matrix.year` here.
+#
+# THREE places have to agree, not one: `matrix.year`, the `/N` in `--shard i/N`, and the
+# `--years` on the gather job. Change the matrix alone and the fetch succeeds while gather
+# finalises a different span, finds no parts for it, and publishes nothing - a silent
+# no-op that looks like a green run.
+#
+# Currently set to 2000-2009: 2010-2019 is already fetched and shipped in the
+# `backfill-data` release, and the GEFSv12 reforecast archive stops at 2019 (2020+ is
+# 404 - it is a one-time retrospective product, not a rolling feed).
+on:
+  workflow_dispatch:
+
+concurrency:
+  # Never two backfills at once: they would fight over the same part cache on re-runs.
+  group: backfill-reforecast
+  cancel-in-progress: false
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      # 8 concurrent jobs x 20 download workers = ~160 connections into a public AWS Open
+      # Data bucket. Enough to finish in a few waves, modest enough to be a good citizen.
+      max-parallel: 8
+      matrix:
+        year: [2000, 2001, 2002, 2003, 2004, 2005, 2006, 2007, 2008, 2009]
+        shard: [1, 2]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            backend/requirements.txt
+            backend/requirements-live.txt
+
+      - name: Install dependencies
+        working-directory: backend
+        # requirements-live brings eccodes/cfgrib/xarray, needed to decode GRIB2.
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-live.txt
+          python -m eccodes selfcheck
+
+      - name: Fetch shard
+        working-directory: backend
+        run: |
+          python -m scripts.fetch_gefs_reforecast_sample \
+            --years '${{ matrix.year }}' \
+            --shard '${{ matrix.shard }}/2' \
+            --resume
+
+      - name: Upload this shard's parts
+        uses: actions/upload-artifact@v4
+        with:
+          name: parts-${{ matrix.year }}-${{ matrix.shard }}
+          path: backend/data/samples/_gefs_parts/*.parquet
+          retention-days: 7
+          if-no-files-found: error
+
+  gather:
+    needs: fetch
+    # `always()`: a shard that failed should not cost us the ones that succeeded. The
+    # per-year files are rebuilt from whatever parts arrived, and the row counts printed
+    # at the end say plainly what is present.
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            backend/requirements.txt
+            backend/requirements-live.txt
+
+      - name: Install dependencies
+        working-directory: backend
+        # requirements-live is needed even though this job decodes nothing: the fetch
+        # script imports xarray at module scope, so it cannot be imported without it.
+        # (An earlier version skipped it on the reasoning that the parts are already
+        # parquet - true of the work, wrong about the import, and the job failed here.)
+        run: pip install -r requirements.txt -r requirements-live.txt
+
+      - name: Collect every shard's parts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: parts-*
+          merge-multiple: true
+          path: backend/data/samples/_gefs_parts
+
+      - name: Build one dataset per year
+        working-directory: backend
+        # --resume with every part already present downloads nothing: it skips each init
+        # as cached and goes straight to writing the per-year CSV/parquet.
+        run: |
+          ls data/samples/_gefs_parts/*.parquet | wc -l | xargs echo "parts collected:"
+          python -m scripts.fetch_gefs_reforecast_sample \
+            --years 2000-2009 --resume
+
+      - name: Summarise what arrived
+        working-directory: backend
+        run: |
+          python - <<'PY' | tee "$GITHUB_STEP_SUMMARY"
+          import glob, pandas as pd
+          print("### Reforecast backfill\n")
+          print("| year | rows | init dates | members |")
+          print("|---|---|---|---|")
+          total = 0
+          for f in sorted(glob.glob("data/samples/gefs_reforecast_india_*.parquet")):
+              d = pd.read_parquet(f)
+              total += len(d)
+              year = f.split("_")[-1].split(".")[0]
+              print(f"| {year} | {len(d):,} | {d.init_date.nunique()} | "
+                    f"{len(d.member.unique())} |")
+          print(f"\n**{total:,} forecast rows total.**")
+          PY
+
+      - name: Publish the dataset
+        uses: actions/upload-artifact@v4
+        with:
+          name: reforecast-backfill
+          path: |
+            backend/data/samples/gefs_reforecast_india_*.parquet
+            backend/data/samples/gefs_reforecast_india_*.csv
+          retention-days: 30
+          if-no-files-found: error
