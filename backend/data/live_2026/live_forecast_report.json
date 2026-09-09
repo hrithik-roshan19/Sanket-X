@@ -1,0 +1,70 @@
+{
+  "rows": 7200,
+  "cities": 36,
+  "non_finite_value_counts": {
+    "soil_moisture_pct": 100
+  },
+  "members": [
+    "gec00",
+    "gep01",
+    "gep02",
+    "gep03",
+    "gep04"
+  ],
+  "lead_days": [
+    1,
+    2,
+    3,
+    4,
+    5
+  ],
+  "variables": [
+    "atmospheric_moisture_kgm2",
+    "humidity_pct",
+    "pressure_hpa",
+    "rainfall_mm",
+    "soil_moisture_pct",
+    "temperature_c",
+    "wind_direction_deg",
+    "wind_speed_ms"
+  ],
+  "init_date": "2026-09-07",
+  "cycle": "00Z",
+  "status": "PASS",
+  "output": "D:\\Sanket-X-M12-fixed\\backend\\data\\live_2026\\live_forecast_canonical.parquet",
+  "model_contract": {
+    "training_period": "2019",
+    "members": [
+      "gec00",
+      "gep01",
+      "gep02",
+      "gep03",
+      "gep04"
+    ],
+    "leads_hours": [
+      24,
+      48,
+      72,
+      96,
+      120
+    ],
+    "variables": [
+      "temperature_c",
+      "humidity_pct",
+      "pressure_hpa",
+      "rainfall_mm",
+      "wind_speed_ms",
+      "wind_direction_deg",
+      "atmospheric_moisture_kgm2",
+      "soil_moisture_pct"
+    ]
+  },
+  "download_contract": {
+    "connect_timeout_seconds": 30,
+    "read_timeout_seconds": 45,
+    "retries": 5,
+    "resume_enabled": true,
+    "atomic_publish": true,
+    "remote_size_check": true
+  }
+}

@@ -1,0 +1,129 @@
+{
+  "dataset": "Sanket-X canonical historical GEFSv12",
+  "builder": "M2.7",
+  "timestamp_utc": "2026-09-06T18:50:07.182863+00:00",
+  "source": "NOAA GEFSv12 operational archive",
+  "target_window": {
+    "start": "2020-09-23",
+    "end": "2025-12-31"
+  },
+  "cycle": "00",
+  "members": [
+    "gec00",
+    "gep01",
+    "gep02",
+    "gep03",
+    "gep04"
+  ],
+  "lead_hours": [
+    24,
+    48,
+    72,
+    96,
+    120
+  ],
+  "lead_days": [
+    1,
+    2,
+    3,
+    4,
+    5
+  ],
+  "india_bbox": {
+    "latitude_min": 6.5,
+    "latitude_max": 38.5,
+    "longitude_min": 66.5,
+    "longitude_max": 100.0
+  },
+  "required_columns": [
+    "atmospheric_moisture_kgm2",
+    "cycle",
+    "humidity_pct",
+    "init_date",
+    "latitude",
+    "lead_day",
+    "lead_hour",
+    "longitude",
+    "member",
+    "pressure_hpa",
+    "rainfall_mm",
+    "temperature_c",
+    "valid_date",
+    "wind_u10_ms",
+    "wind_v10_ms"
+  ],
+  "partition_count": 90,
+  "total_rows": 1567350,
+  "total_partition_bytes": 22009284,
+  "coverage": {
+    "expected_partitions": 48150,
+    "present_partitions": 90,
+    "missing_partitions": 48060,
+    "unexpected_partitions": 0,
+    "missing_examples": [
+      "2020-09-25|gep03|1",
+      "2020-09-25|gep03|2",
+      "2020-09-25|gep03|3",
+      "2020-09-25|gep03|4",
+      "2020-09-25|gep03|5",
+      "2020-09-25|gep04|1",
+      "2020-09-25|gep04|2",
+      "2020-09-25|gep04|3",
+      "2020-09-25|gep04|4",
+      "2020-09-25|gep04|5",
+      "2020-09-27|gec00|1",
+      "2020-09-27|gec00|2",
+      "2020-09-27|gec00|3",
+      "2020-09-27|gec00|4",
+      "2020-09-27|gec00|5",
+      "2020-09-27|gep01|1",
+      "2020-09-27|gep01|2",
+      "2020-09-27|gep01|3",
+      "2020-09-27|gep01|4",
+      "2020-09-27|gep01|5",
+      "2020-09-27|gep02|1",
+      "2020-09-27|gep02|2",
+      "2020-09-27|gep02|3",
+      "2020-09-27|gep02|4",
+      "2020-09-27|gep02|5"
+    ],
+    "unexpected_examples": [],
+    "days_present": 4,
+    "first_init_date": "2020-09-23",
+    "last_init_date": "2020-09-26",
+    "members_present": [
+      "gec00",
+      "gep01",
+      "gep02",
+      "gep03",
+      "gep04"
+    ],
+    "lead_days_present": [
+      1,
+      2,
+      3,
+      4,
+      5
+    ],
+    "complete_target_window": false
+  },
+  "cross_partition_checks": {
+    "valid": true,
+    "rows_positive": true,
+    "grid_cells_positive": true,
+    "cycle_consistent": true,
+    "member_set_valid": true,
+    "lead_set_valid": true,
+    "grid_cell_count_consistent": true,
+    "latitude_bounds_consistent": true,
+    "longitude_bounds_consistent": true
+  },
+  "failed_partitions": [],
+  "catalog_path": "D:\\Sanket-X-M12-fixed\\backend\\data\\canonical_gefs_m2_7\\partition_catalog.parquet",
+  "interpolation": false,
+  "regridding": false,
+  "nearest_neighbor": false,
+  "fabricated_values": false,
+  "complete_training_dataset": false,
+  "status": "PASS"
+}

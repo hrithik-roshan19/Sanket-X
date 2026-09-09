@@ -1,0 +1,35 @@
+{
+  "bust_threshold": {
+    "atmospheric_moisture_kgm2": 6.712350637118021,
+    "humidity_pct": 23.610291916755454,
+    "pressure_hpa": 2.4976389322915913,
+    "rainfall_mm": 6.462000058591368,
+    "soil_moisture_pct": 30.89624938070774,
+    "temperature_c": 4.670685755411807,
+    "wind_direction_deg": 190.46435203648508,
+    "wind_speed_ms": 1.8704527018726764
+  },
+  "p90_error": {
+    "atmospheric_moisture_kgm2": 7.787499861717223,
+    "humidity_pct": 25.067150987155767,
+    "pressure_hpa": 3.1115071614583374,
+    "rainfall_mm": 7.399999644607304,
+    "soil_moisture_pct": 30.899999332427978,
+    "temperature_c": 4.830580469767278,
+    "wind_direction_deg": 250.54308863722065,
+    "wind_speed_ms": 2.0551258835958035
+  },
+  "risk_band_cuts": {
+    "medium": 0.6935483870967742,
+    "high": 0.7702702702702703
+  },
+  "threshold_percentile": 90.0,
+  "risk_cut_quantiles": [
+    0.5,
+    0.8
+  ],
+  "notes": [
+    "bust_threshold = 90th pct of event-grain ensemble-mean abs error, train split (6 cycles)",
+    "risk bands from 350 validation events"
+  ]
+}

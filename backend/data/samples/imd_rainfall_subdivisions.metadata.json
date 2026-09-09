@@ -51,7 +51,14 @@
   "source_url": "https://www.imdpune.gov.in/cmpg/Griddata/Rainfall_25_NetCDF.html",
   "fabricated_values": false,
   "grid_coverage_exceptions": {
-    "IMD-01": "LAKSHADWEEP"
+    "IMD-01": {
+      "name": "LAKSHADWEEP",
+      "reason": "No 0.25-degree grid-cell center falls inside the subdivision polygon."
+    },
+    "IMD-02": {
+      "name": "A & N ISLAND",
+      "reason": "Eight 0.25-degree grid-cell centers fall inside the polygon, but all 2019 RAINFALL values at those cells are NaN."
+    }
   },
-  "coverage_note": "Subdivisions without a usable 0.25-degree grid-cell center are excluded rather than assigned fabricated or interpolated rainfall."
+  "coverage_note": "Only subdivisions with usable rainfall observations are included. Missing subdivisions are excluded rather than assigned fabricated or interpolated rainfall."
 }
