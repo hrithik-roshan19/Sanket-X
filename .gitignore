@@ -60,3 +60,5 @@ docs/results.md
 # Local editor/agent tooling config. Machine-specific (it carries absolute paths from
 # whoever generated it) and of no use to anyone cloning this, so it is not published.
 .claude/
+
+.vscode/
