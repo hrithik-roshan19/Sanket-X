@@ -62,3 +62,8 @@ docs/results.md
 .claude/
 
 .vscode/
+
+# Large weather-data artifacts
+backend/data/imd_rainfall/
+backend/data/canonical_gefs_historical/_raw/
+backend/data/operational_gefs_smoke/grib/
