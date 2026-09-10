@@ -61,7 +61,7 @@ COPY --from=web /web/dist ./app/static
 #
 # ENV rather than ARG: the entrypoint needs it at runtime, and ARG does not survive
 # into the running container.
-ENV DATA_ASSET_URL="https://github.com/Bhushan2318/sih-main/releases/download/data-latest/sanket-data.tar.gz"
+ENV DATA_ASSET_URL="https://github.com/hrithik-roshan19/Sanket-X/releases/download/data-latest/sanket-data.tar.gz"
 
 # A build-time copy as a genuine fallback, so a GitHub outage at boot degrades the site
 # to stale data rather than to no data. This layer IS cached and so may be old - that is
@@ -78,3 +78,4 @@ RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
 EXPOSE 8000
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
+
